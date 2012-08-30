@@ -3,3 +3,4 @@
 -cli0
 -l160
 -nut
+-TBITARRAY_TYPE
