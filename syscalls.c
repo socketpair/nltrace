@@ -41,7 +41,23 @@ typedef struct
 
 } args_t;
 
-static inline void get_args (const struct user_regs_struct *state, args_t * args)
+static void print_args_t (FILE *output, const args_t *args)
+{
+
+  fprintf (output, " a1: 0x%lx\n", args->a1);
+  fprintf (output, " a2: 0x%lx\n", args->a2);
+  fprintf (output, " a3: 0x%lx\n", args->a3);
+  fprintf (output, " a4: 0x%lx\n", args->a4);
+  fprintf (output, " a5: 0x%lx\n", args->a5);
+  fprintf (output, " a6: 0x%lx\n", args->a6);
+  fprintf (output, "ret: 0x%lx\n", args->ret);
+  fprintf (output, " nr: 0x%lx\n", args->nr);
+
+}
+
+
+
+static inline void get_args (const struct user_regs_struct *state, args_t *args)
 {
 /* match order as in struct user_regs_struct */
 #ifdef __amd64__
@@ -75,52 +91,65 @@ void trace_syscall (pid_t pid, const struct user_regs_struct *state1, const stru
   get_args (state1, &args1);
   get_args (state2, &args2);
 
-  switch (state1->orig_rax)
+  // http://www.skyfree.org/linux/kernel_network/socket.html
+  switch (args1.nr)
   {
+#ifdef SYS_socketcall
+  case SYS_socketcall:
+    print_args_t (stderr, &args1);
+    print_args_t (stderr, &args2);
+    break;
+#else
   case SYS_socket:
-    handle_socket (args2.ret, args1.a1, args1.a2, args1.a3);
+    handle_socket (pid, args2.ret, args1.a1, args1.a2, args1.a3);
     break;
   case SYS_sendto:
-    handle_sendto (args2.ret, args1.a1, (const char *) args1.a2, args1.a3, (const struct sockaddr *) args1.a4, args1.a5);
+    handle_sendto (pid, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, (const struct sockaddr *) args1.a4, args1.a5);
     break;
   case SYS_recvfrom:
-    handle_recvfrom (args2.ret, args1.a1, (const char *) args1.a2, args1.a3, args1.a4, (const struct sockaddr *) args1.a5, (const socklen_t *) args1.a6);
+    handle_recvfrom (pid, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, args1.a4, (const struct sockaddr *) args1.a5, (const socklen_t *) args1.a6);
     break;
+  case SYS_recvmsg:
+    handle_recvmsg (pid, args2.ret, args1.a1, (struct msghdr *) args1.a2, args1.a3);
+    break;
+  case SYS_sendmsg:
+    handle_sendmsg (pid, args2.ret, args1.a1, (const struct msghdr *) args1.a2, args1.a3);
+    break;
+  case SYS_recvmmsg:
+    break;
+  case SYS_sendmmsg:
+    break;
+#endif
   case SYS_close:
-    handle_close (args2.ret, args1.a1);
+    handle_close (pid, args2.ret, args1.a1);
     break;
   case SYS_dup3:
+    handle_dup3 (pid, args2.ret, args1.a1, args1.a2, args1.a3);
+    break;
   case SYS_dup2:
+    handle_dup2 (pid, args2.ret, args1.a1, args1.a2);
+    break;
   case SYS_dup:
-  case SYS_socketpair:
-  case SYS_clone:
-  case SYS_recvmmsg:
-  case SYS_recvmsg:
-//       ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags);
-  case SYS_sendmmsg:
-  case SYS_sendmsg:
-    /* 
-       ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
+    handle_dup (pid, args2.ret, args1.a1);
+    break;
+    /*
+       case SYS_execve:
+       case SYS_fork:
+       case SYS_clone:
 
+
+       pread64
+       preadv
+       pwrite64
+       pwritev
+       read
+       readv
+       recv
+       sendfile (file -> socket)
+       sendfile64  (file -> socket)
+       splice (pipe -> socket), (socket->pipe)
+       write
+       writev
      */
-    // HANDLE unix socket (!) - receiving of descriptors
-
-    /* syscalls in threads ?! AIEIEIEIO!! */
-    break;
-  case SYS_execve:
-  case SYS_fork:
-    break;
-  default:
-    return;
   }
-
-#if 0
-  // sys_write
-  if (state.orig_eax == SYS_write)
-  {
-    char *text = (char *) state.ecx;
-    ptrace (PTRACE_POKETEXT, pid, (void *) (text + 7), 0x72626168);     //habr
-    ptrace (PTRACE_POKETEXT, pid, (void *) (text + 11), 0x00000a21);    //!\n
-  }
-#endif
 }

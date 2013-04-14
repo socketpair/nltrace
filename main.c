@@ -25,7 +25,10 @@ static int wait_for_stopped (pid_t pid, bool sysgood, int *retstatus)
   {
 
     if (waitpid (pid, &status, 0) == -1)
+    {
+      perror ("waitpid failed");
       return -1;                //FAIL
+    }
 
     if (WIFEXITED (status))
     {
@@ -71,31 +74,55 @@ typedef struct
   size_t datalen;
 } fake_t;
 
+static pid_t fork_and_trace_child (char **argv)
+{
+  pid_t pid;
+
+  if ((pid = fork ()))
+    return pid;
+
+  /* child here */
+  if (prctl (PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0) == -1)
+    _exit (1);
+
+  if (getppid () <= 1)
+    _exit (2);
+
+
+  if (ptrace (PTRACE_TRACEME, 0, 0, 0) == -1)
+    _exit (3);
+
+  /* will cause this child to super-stop */
+  execvp (argv[1], argv + 1);
+  _exit (6);
+}
+
 int main (int argc, char *argv[])
 {
   pid_t pid;
+  int status = 1;
 
   if (argc < 2)
     return 1;
 
-  if (!(pid = fork ()))
+  if ((pid = fork_and_trace_child (argv)) == -1)
+    return 2;
+
+  if (wait_for_stopped (pid, false, &status))
   {
-    if (prctl (PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0) == -1)
-      return 1;
-    if (getppid () <= 1)
-      return 2;
-    //TODO: check if non-cloexec descriptors are NETLINK sockets...
-    if (ptrace (PTRACE_TRACEME, 0, 0, 0) == -1)
-      return 3;
-    execvp (argv[1], argv + 1);
-    return 4;
+    fprintf (stderr, "child process unexpectedly dead\n");
+    return 3;
   }
 
-  int status = 1;
-  if (wait_for_stopped (pid, false, &status))
-    return status;
+  /*
+     When  delivering syscall traps, set bit 7 in the signal number
+     (i.e., deliver SIGTRAP | 0x80).  This makes it easy for the tracer
+     to tell the difference between normal traps and those caused by a
+     syscall.  (PTRACE_O_TRACESYSGOOD may not work on all architectures.)
+   */
   if (ptrace (PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD) == -1)
     return 5;
+
   for (;;)
   {
     struct user_regs_struct state1;
@@ -106,5 +133,5 @@ int main (int argc, char *argv[])
       break;
     trace_syscall (pid, &state1, &state2);
   }
-  return status;
+  return status & 0xff;
 }

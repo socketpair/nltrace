@@ -4,3 +4,6 @@
 -l160
 -nut
 -TBITARRAY_TYPE
+-Targs_t
+-Tsocklen_t
+-TFILE
