@@ -116,6 +116,62 @@ end:
 }
 
 
+static int usermemcpy (char *data, pid_t pid, const char *usermem, size_t length)
+{
+
+  size_t tmp = ((size_t) usermem) % sizeof (long);
+
+  if (tmp)
+  {
+    size_t useful_bytes = sizeof (long) - tmp;
+
+    fprintf (stderr, "usermemcpy: copying unaligned start (%lu bytes) of user memory\n", (unsigned long) useful_bytes);
+    long chunk;
+    if ((chunk = ptrace (PTRACE_PEEKDATA, pid, (void *) (((size_t) usermem) / sizeof (long) * sizeof (long)), NULL)) == -1 && errno)
+    {
+      perror ("ptrace");
+      return -1;
+    }
+
+    memcpy (data, ((char *) &chunk) + tmp, useful_bytes);
+    usermem += useful_bytes;
+    data += useful_bytes;
+    length -= useful_bytes;
+  }
+
+  fprintf (stderr, "usermemcpy: copying aligned %lu bytes of memory\n", (unsigned long) length);
+  while (length >= sizeof (long))
+  {
+    long chunk;
+    if ((chunk = ptrace (PTRACE_PEEKDATA, pid, usermem, NULL)) == -1 && errno)
+    {
+      perror ("ptrace");
+      return -1;
+    }
+    *(long *) data = chunk;
+    data += sizeof (long);
+    usermem += sizeof (long);
+    length -= sizeof (long);
+  }
+
+  if (length)
+  {
+    fprintf (stderr, "usermemcpy: copying unaligned end (%lu bytes) of user memory\n", (unsigned long) length);
+
+    long chunk;
+
+    if ((chunk = ptrace (PTRACE_PEEKDATA, pid, usermem, NULL)) == -1 && errno)
+    {
+      perror ("trace");
+
+      return -1;
+    }
+    memcpy (data, &chunk, length);
+  }
+
+  return 0;
+}
+
 //TODO: exactly the same, but on UNIX sockets...
 void handle_socket (pid_t pid, int ret, int domain, int type, int protocol)
 {
@@ -162,8 +218,19 @@ void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t 
 
   char *data = NULL;
 
-  if (!(data = malloc (ret)))
+
+  if (!(data = malloc (buflen)))
+  {
+    perror ("malloc");
     goto end;
+  }
+
+  if (usermemcpy (data, pid, buf, buflen) == -1)
+  {
+    fprintf (stderr, "usermemcpy() [sendto] failed\n");
+    goto end;
+  }
+
 
   handle_netlink_send (pid, sockfd, data, strlen (data));
 
@@ -199,7 +266,16 @@ void handle_recvfrom (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_
   char *data = NULL;
 
   if (!(data = malloc (ret)))
+  {
+    perror ("malloc");
     goto end;
+  }
+
+  if (usermemcpy (data, pid, buf, ret) == -1)
+  {
+    fprintf (stderr, "usermemcpy() [recvfrom] failed\n");
+    goto end;
+  }
 
   handle_netlink_recv (pid, sockfd, data, strlen (data));
 end:
