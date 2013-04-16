@@ -17,8 +17,6 @@
 #include <errno.h>
 #include <stdlib.h>
 
-#include <stddef.h>             /* offsetof */
-
 #include "utils.h"
 #include "nl_stub.h"
 
@@ -295,13 +293,13 @@ static int handle_msg (void *data, size_t datalen, pid_t pid, const struct msghd
 
 //  fprintf (stderr, "RECVMSG: begin of operation\n");
 
-  if (usermemcpy (&msg_iov, pid, ((char *) msg) + offsetof (struct msghdr, msg_iov), sizeof (msg_iov)) == -1)
+  if (usermemcpy (&msg_iov, pid, &msg->msg_iov, sizeof (msg_iov)) == -1)
   {
     fprintf (stderr, "usermemcpy() [recvmsg1] failed\n");
     return -1;
   }
 
-  if (usermemcpy (&msg_iovlen, pid, ((char *) msg) + offsetof (struct msghdr, msg_iovlen), sizeof (msg_iovlen)) == -1)
+  if (usermemcpy (&msg_iovlen, pid, &msg->msg_iovlen, sizeof (msg_iovlen)) == -1)
   {
     fprintf (stderr, "usermemcpy() [recvmsg2] failed\n");
     return -1;
@@ -316,13 +314,13 @@ static int handle_msg (void *data, size_t datalen, pid_t pid, const struct msghd
 
 //    fprintf (stderr, "RECVMSG: begin of copying iovec fields\n");
 
-    if (usermemcpy (&iov_base, pid, ((char *) msg_iov) + offsetof (struct iovec, iov_base), sizeof (iov_base)) == -1)
+    if (usermemcpy (&iov_base, pid, &msg_iov->iov_base, sizeof (iov_base)) == -1)
     {
       fprintf (stderr, "usermemcpy() [recvmsg3] failed\n");
       return -1;
     }
 
-    if (usermemcpy (&iov_len, pid, ((char *) msg_iov) + offsetof (struct iovec, iov_len), sizeof (iov_len)) == -1)
+    if (usermemcpy (&iov_len, pid, &msg_iov->iov_len, sizeof (iov_len)) == -1)
     {
       fprintf (stderr, "usermemcpy() [recvmsg4] failed\n");
       return -1;
