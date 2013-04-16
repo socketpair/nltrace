@@ -17,6 +17,8 @@
 #include <errno.h>
 #include <stdlib.h>
 
+#include <stddef.h>             /* offsetof */
+
 #include "utils.h"
 #include "nl_stub.h"
 
@@ -116,7 +118,7 @@ end:
 }
 
 
-static int usermemcpy (char *data, pid_t pid, const char *usermem, size_t length)
+static int usermemcpy (void *destination, pid_t pid, const void *usermem, size_t length)
 {
 
   size_t tmp = ((size_t) usermem) % sizeof (long);
@@ -133,13 +135,15 @@ static int usermemcpy (char *data, pid_t pid, const char *usermem, size_t length
       return -1;
     }
 
-    memcpy (data, ((char *) &chunk) + tmp, useful_bytes);
+    memcpy (destination, ((char *) &chunk) + tmp, useful_bytes);
     usermem += useful_bytes;
-    data += useful_bytes;
+    destination += useful_bytes;
     length -= useful_bytes;
   }
 
-  fprintf (stderr, "usermemcpy: copying aligned %lu bytes of memory\n", (unsigned long) length);
+  if (length >= sizeof (long))
+    fprintf (stderr, "usermemcpy: copying aligned %lu bytes of memory\n", (unsigned long) (length / sizeof (long) * sizeof (long)));
+
   while (length >= sizeof (long))
   {
     long chunk;
@@ -148,15 +152,15 @@ static int usermemcpy (char *data, pid_t pid, const char *usermem, size_t length
       perror ("ptrace");
       return -1;
     }
-    *(long *) data = chunk;
-    data += sizeof (long);
+    *(long *) destination = chunk;
+    destination += sizeof (long);
     usermem += sizeof (long);
     length -= sizeof (long);
   }
 
   if (length)
   {
-    fprintf (stderr, "usermemcpy: copying unaligned end (%lu bytes) of user memory\n", (unsigned long) length);
+    fprintf (stderr, "usermemcpy: copying last %lu bytes from aligned user memory\n", (unsigned long) length);
 
     long chunk;
 
@@ -166,7 +170,7 @@ static int usermemcpy (char *data, pid_t pid, const char *usermem, size_t length
 
       return -1;
     }
-    memcpy (data, &chunk, length);
+    memcpy (destination, &chunk, length);
   }
 
   return 0;
@@ -197,10 +201,6 @@ void handle_socket (pid_t pid, int ret, int domain, int type, int protocol)
 void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t buflen, const struct sockaddr *dest_addr, socklen_t addrlen)
 {
 
-  /* TODO: HAY! we should check for remote errno! suppose sending of valid message with wrong sequence */
-  if (ret < 0)
-    return;
-
   (void) buf;
   (void) buflen;
   (void) dest_addr;
@@ -213,11 +213,17 @@ void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t 
   if (!bit_get (netlink_sockets, sockfd))
     return;
 
-
-  //TODO: send not all, zero and so on
+  if (ret < 0)
+  {
+    // TODO: do not parse if EINVAL or so
+    fprintf (stderr, "sendto() failed\n");
+  }
+  else if ((size_t) ret != buflen)
+  {
+    fprintf (stderr, "Warning sent only part of the message\n");
+  }
 
   char *data = NULL;
-
 
   if (!(data = malloc (buflen)))
   {
@@ -231,8 +237,7 @@ void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t 
     goto end;
   }
 
-
-  handle_netlink_send (pid, sockfd, data, strlen (data));
+  handle_netlink_send (pid, sockfd, data, buflen);
 
 end:
   free (data);
@@ -277,10 +282,83 @@ void handle_recvfrom (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_
     goto end;
   }
 
-  handle_netlink_recv (pid, sockfd, data, strlen (data));
+  handle_netlink_recv (pid, sockfd, data, ret);
 end:
   free (data);
 }
+
+
+static int handle_msg (void *data, size_t datalen, pid_t pid, const struct msghdr *msg)
+{
+  const struct iovec *msg_iov;
+  size_t msg_iovlen;
+
+//  fprintf (stderr, "RECVMSG: begin of operation\n");
+
+  if (usermemcpy (&msg_iov, pid, ((char *) msg) + offsetof (struct msghdr, msg_iov), sizeof (msg_iov)) == -1)
+  {
+    fprintf (stderr, "usermemcpy() [recvmsg1] failed\n");
+    return -1;
+  }
+
+  if (usermemcpy (&msg_iovlen, pid, ((char *) msg) + offsetof (struct msghdr, msg_iovlen), sizeof (msg_iovlen)) == -1)
+  {
+    fprintf (stderr, "usermemcpy() [recvmsg2] failed\n");
+    return -1;
+  }
+
+//  fprintf (stderr, "datalen=%ld, msg_iov=%p, iov_len=%lu\n", (long) datalen, msg_iov, (unsigned long) msg_iovlen);
+
+  for (; msg_iovlen && datalen; msg_iovlen--, msg_iov++)
+  {
+    void *iov_base;
+    size_t iov_len;
+
+//    fprintf (stderr, "RECVMSG: begin of copying iovec fields\n");
+
+    if (usermemcpy (&iov_base, pid, ((char *) msg_iov) + offsetof (struct iovec, iov_base), sizeof (iov_base)) == -1)
+    {
+      fprintf (stderr, "usermemcpy() [recvmsg3] failed\n");
+      return -1;
+    }
+
+    if (usermemcpy (&iov_len, pid, ((char *) msg_iov) + offsetof (struct iovec, iov_len), sizeof (iov_len)) == -1)
+    {
+      fprintf (stderr, "usermemcpy() [recvmsg4] failed\n");
+      return -1;
+    }
+
+//    fprintf (stderr, "RECVMSG: Starting to copy iovec data: %p, length=%lu\n", iov_base, (unsigned long) iov_len);
+
+    if (iov_len > datalen)
+    {
+      fprintf (stderr, "IOV was TOO LONG...\n");
+      iov_len = datalen;
+    }
+
+    if (usermemcpy (data, pid, iov_base, iov_len) == -1)
+    {
+      fprintf (stderr, "usermemcpy() [recvmsg5] failed\n");
+      return -1;
+    }
+
+    data += iov_len;
+    datalen -= iov_len;
+  }
+
+  if (msg_iovlen)
+  {
+    fprintf (stderr, "not all IOVs was read\n");
+  }
+
+  if (datalen)
+  {
+    fprintf (stderr, "not all data was filled\n");
+  }
+
+  return 0;
+}
+
 
 void handle_recvmsg (pid_t pid, ssize_t ret, int sockfd, struct msghdr *msg, int flags)
 {
@@ -296,7 +374,23 @@ void handle_recvmsg (pid_t pid, ssize_t ret, int sockfd, struct msghdr *msg, int
   if (!bit_get (netlink_sockets, sockfd))
     return;
 
-  fprintf (stderr, "recvmsg(%d) netlink returns %zu\n", sockfd, ret);
+  char *data = NULL;
+
+  if (!(data = malloc (ret)))
+  {
+    perror ("malloc");
+    goto end;
+  }
+
+  if (handle_msg (data, ret, pid, msg) == -1)
+  {
+    fprintf (stderr, "handle_msg FAILED\n");
+    goto end;
+  }
+
+  handle_netlink_recv (pid, sockfd, data, ret);
+end:
+  free (data);
 }
 
 void handle_sendmsg (pid_t pid, ssize_t ret, int sockfd, const struct msghdr *msg, int flags)
@@ -313,7 +407,26 @@ void handle_sendmsg (pid_t pid, ssize_t ret, int sockfd, const struct msghdr *ms
   if (!bit_get (netlink_sockets, sockfd))
     return;
 
-  fprintf (stderr, "netlink sendmsg stillnot implemented\n");
+
+  char *data = NULL;
+
+  // TODO: we must detect total length of original message (!)
+  if (!(data = malloc (ret)))
+  {
+    perror ("malloc");
+    goto end;
+  }
+
+  if (handle_msg (data, ret, pid, msg) == -1)
+  {
+    fprintf (stderr, "handle_msg FAILED\n");
+    goto end;
+  }
+
+  handle_netlink_send (pid, sockfd, data, ret);
+
+end:
+  free (data);
 
 }
 
