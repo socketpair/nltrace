@@ -23,47 +23,22 @@
 static BITARRAY_TYPE netlink_sockets[65536 / WORDBITS];
 static BITARRAY_TYPE known_fds[65536 / WORDBITS];
 
-static void detect_fd_type (pid_t pid, int fd)
-{
-  char path[256];
-  char result[256];
-  int tmp;
 
-  fprintf (stderr, "Detecting socket type!\n");
-  tmp = snprintf (path, sizeof (path), "/proc/%d/fd/%d", pid, fd);
-
-  if (tmp <= 0)
-  {
-    perror ("sprintf of path");
-    return;
-  }
-
-  if (tmp >= (int) (sizeof (path)))
-  {
-    fprintf (stderr, "printf buffer overflow\n");
-    return;
-  }
-
-  if (readlink (path, result, sizeof (result)) == -1)
-  {
-    perror ("readlink");
-    return;
-  }
-
-  // TODO: %d? %ld?
-  int inode = -1;
-  if (sscanf (result, "socket:[%d]", &inode) != 1)
-    return;
-
+static int scan_proc_net_netlink (unsigned long inode, int *ret_protocol) {
   FILE *netlink;
+  char result[256];
+  /* http://lxr.linux.no/linux+v3.8.8/net/netlink/af_netlink.c#L2055 */
+  static const char *header = "sk       Eth Pid    Groups   Rmem     Wmem     Dump     Locks     Drops     Inode\n";
+  int protocol;
+  unsigned long scanned_inode;
+  int retval = -1;
+
 
   if (!(netlink = fopen ("/proc/net/netlink", "rte")))
   {
     perror ("Opening /proc/net/netlink");
     goto end;
   }
-
-  static const char *header = "sk       Eth Pid    Groups   Rmem     Wmem     Dump     Locks     Drops     Inode\n";
 
   if (!fgets (result, sizeof (result), netlink))
   {
@@ -89,30 +64,89 @@ static void detect_fd_type (pid_t pid, int fd)
       goto end;
     }
 
+    // TODO: fscanf?
     // 0000000000000000 0   4195573 00000000 0        0        0000000000000000 2        0        8636
-    if (sscanf (result, "%*s %*s %*s %*s %*s %*s %*s %*s %*s %d", &tmp) != 1)
+    if (sscanf (result, "%*s %d %*s %*s %*s %*s %*s %*s %*s %lu", &protocol, &scanned_inode) != 1)
     {
       fprintf (stderr, "Can not parse string %s\n", result);
       goto end;
     }
 
-    if (inode != tmp)
+    if (inode != scanned_inode)
       continue;
 
-    fprintf (stderr, "Found that fd %d (inode %d) is netlink socket\n", fd, inode);
-    bit_set (known_fds, fd);
-    bit_set (netlink_sockets, fd);
-    handle_netlink_appear (pid, fd);
+    fprintf (stderr, "Found that socket inode %lu is the netlink socket\n", inode);
+
+    if (ret_protocol)
+      *ret_protocol = protocol;
+
+    retval = 1;
     goto end;
   }
 
-  fprintf (stderr, "Found that fd %d (inode %d) is not netlink socket\n", fd, inode);
-  bit_set (known_fds, fd);
-  bit_clear (netlink_sockets, fd);
+  fprintf (stderr, "Found that socket inode %lu is not netlink socket\n", inode);
+  retval = 0;
 
 end:
   if (netlink)
     fclose (netlink);
+  return retval;
+}
+
+static void detect_fd_type (pid_t pid, int fd)
+{
+  char path[128];
+  char result[256];
+  int tmp;
+
+  fprintf (stderr, "Detecting socket type!\n");
+  tmp = snprintf (path, sizeof (path), "/proc/%u/fd/%d", (unsigned int) pid, fd);
+
+  if (tmp <= 0)
+  {
+    perror ("sprintf of path");
+    return;
+  }
+
+  if (tmp >= (int) (sizeof (path)))
+  {
+    fprintf (stderr, "printf buffer overflow\n");
+    return;
+  }
+
+  if (readlink (path, result, sizeof (result)) == -1)
+  {
+    perror ("readlink");
+    return;
+  }
+
+  // TODO: %d? %ld?
+  unsigned long inode = -1;
+  if (sscanf (result, "socket:[%lu]", &inode) != 1)
+  {
+    // some other descriptor....
+    return;
+  }
+
+  int protocol;
+
+  if ((tmp = scan_proc_net_netlink (inode, &protocol)) == -1)
+  {
+    fprintf (stderr, "/proc/net/netlink scanning failed\n");
+    return;
+  }
+
+  bit_set (known_fds, fd);
+  if (tmp)
+  {
+    bit_set (netlink_sockets, fd);
+    handle_netlink_appear (pid, fd, protocol);
+    fprintf (stderr, "fd %d is a netlink socket\n", fd);
+  }
+  else
+  {
+    bit_clear (netlink_sockets, fd);
+  }
 }
 
 
@@ -193,7 +227,7 @@ void handle_socket (pid_t pid, int ret, int domain, int type, int protocol)
   }
 
   bit_set (netlink_sockets, ret);
-  handle_netlink_appear (pid, ret);
+  handle_netlink_appear (pid, ret, protocol);
 }
 
 void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t buflen, const struct sockaddr *dest_addr, socklen_t addrlen)
@@ -483,7 +517,8 @@ void handle_dup2 (pid_t pid, int ret, int oldfd, int newfd)
   if (bit_get (netlink_sockets, oldfd))
   {
     bit_set (netlink_sockets, newfd);
-    handle_netlink_appear (pid, newfd);
+#warning last zero is the protocol of original socket (!)
+    handle_netlink_appear (pid, newfd, 0);
   }
   // if was unknown, netlink bit already cleaned.
   // if was known: if was netlink socket     - was cleaned earlier
