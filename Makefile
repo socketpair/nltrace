@@ -1,6 +1,7 @@
 all: main
 
-CFLAGS += -D_GNU_SOURCE -Wall -Wextra -O2 --save-temps
+CFLAGS += -D_GNU_SOURCE -Wall -Wextra -I/usr/include/libnl3 -g
+LFLAGS += -lnl-3
 
 .c.o:
 	$(CC) $(CFLAGS) -c $< -o $@

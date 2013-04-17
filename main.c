@@ -9,7 +9,6 @@
 #include <unistd.h>
 #include <sys/syscall.h>        /* For SYS_xxx definitions */
 
-
 #include <asm/types.h>
 #include <sys/socket.h>
 #include <linux/netlink.h>
@@ -45,8 +44,10 @@ static int wait_for_stopped (pid_t pid, bool sysgood, int *retstatus)
     if (sysgood && !(WSTOPSIG (status) & 0x80))
       continue;
 
-    return 0;                   // OK
+    break;
   }
+
+  return 0;                     // OK
 }
 
 static int wait_for_break (pid_t pid, struct user_regs_struct *state, int *status)
@@ -65,21 +66,10 @@ static int wait_for_break (pid_t pid, struct user_regs_struct *state, int *statu
   return 0;
 }
 
-//TODO: different sockets for different fds?
-typedef struct
-{
-  struct nl_sock *sk;
-  struct nl_cb *cb;
-  char *buf;
-  size_t datalen;
-} fake_t;
 
-static pid_t fork_and_trace_child (char **argv)
-{
-  pid_t pid;
 
-  if ((pid = fork ()))
-    return pid;
+static void __attribute__ ((noreturn)) fork_and_trace_child (char **argv)
+{
 
   /* child here */
   if (prctl (PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0) == -1)
@@ -87,7 +77,6 @@ static pid_t fork_and_trace_child (char **argv)
 
   if (getppid () <= 1)
     _exit (2);
-
 
   if (ptrace (PTRACE_TRACEME, 0, 0, 0) == -1)
     _exit (3);
@@ -105,8 +94,16 @@ int main (int argc, char *argv[])
   if (argc < 2)
     return 1;
 
-  if ((pid = fork_and_trace_child (argv)) == -1)
+  pid = fork ();
+
+  if (pid < 0)
+  {
+    perror ("fork");
     return 2;
+  }
+
+  if (pid == 0)
+    fork_and_trace_child (argv);
 
   if (wait_for_stopped (pid, false, &status))
   {

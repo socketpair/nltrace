@@ -125,7 +125,7 @@ static int usermemcpy (void *destination, pid_t pid, const void *usermem, size_t
   {
     size_t useful_bytes = sizeof (long) - tmp;
 
-    fprintf (stderr, "usermemcpy: copying unaligned start (%lu bytes) of user memory\n", (unsigned long) useful_bytes);
+//    fprintf (stderr, "usermemcpy: copying unaligned start (%lu bytes) of user memory\n", (unsigned long) useful_bytes);
     long chunk;
     if ((chunk = ptrace (PTRACE_PEEKDATA, pid, (void *) (((size_t) usermem) / sizeof (long) * sizeof (long)), NULL)) == -1 && errno)
     {
@@ -139,8 +139,8 @@ static int usermemcpy (void *destination, pid_t pid, const void *usermem, size_t
     length -= useful_bytes;
   }
 
-  if (length >= sizeof (long))
-    fprintf (stderr, "usermemcpy: copying aligned %lu bytes of memory\n", (unsigned long) (length / sizeof (long) * sizeof (long)));
+//  if (length >= sizeof (long))
+//    fprintf (stderr, "usermemcpy: copying aligned %lu bytes of memory\n", (unsigned long) (length / sizeof (long) * sizeof (long)));
 
   while (length >= sizeof (long))
   {
@@ -158,7 +158,7 @@ static int usermemcpy (void *destination, pid_t pid, const void *usermem, size_t
 
   if (length)
   {
-    fprintf (stderr, "usermemcpy: copying last %lu bytes from aligned user memory\n", (unsigned long) length);
+//    fprintf (stderr, "usermemcpy: copying last %lu bytes from aligned user memory\n", (unsigned long) length);
 
     long chunk;
 
@@ -221,7 +221,7 @@ void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t 
     fprintf (stderr, "Warning sent only part of the message\n");
   }
 
-  char *data = NULL;
+  unsigned char *data = NULL;
 
   if (!(data = malloc (buflen)))
   {
@@ -236,6 +236,7 @@ void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t 
   }
 
   handle_netlink_send (pid, sockfd, data, buflen);
+  data = NULL;                  /* was already handled/freed */
 
 end:
   free (data);
@@ -266,7 +267,7 @@ void handle_recvfrom (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_
     return;
   }
 
-  char *data = NULL;
+  unsigned char *data = NULL;
 
   if (!(data = malloc (ret)))
   {
@@ -281,6 +282,8 @@ void handle_recvfrom (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_
   }
 
   handle_netlink_recv (pid, sockfd, data, ret);
+  data = NULL;                  /* was already handled/freed */
+
 end:
   free (data);
 }
@@ -330,7 +333,7 @@ static int handle_msg (void *data, size_t datalen, pid_t pid, const struct msghd
 
     if (iov_len > datalen)
     {
-      fprintf (stderr, "IOV was TOO LONG...\n");
+//      fprintf (stderr, "IOV was TOO LONG...\n");
       iov_len = datalen;
     }
 
@@ -372,7 +375,7 @@ void handle_recvmsg (pid_t pid, ssize_t ret, int sockfd, struct msghdr *msg, int
   if (!bit_get (netlink_sockets, sockfd))
     return;
 
-  char *data = NULL;
+  unsigned char *data = NULL;
 
   if (!(data = malloc (ret)))
   {
@@ -387,6 +390,8 @@ void handle_recvmsg (pid_t pid, ssize_t ret, int sockfd, struct msghdr *msg, int
   }
 
   handle_netlink_recv (pid, sockfd, data, ret);
+  data = NULL;                  /* was already handled/freed */
+
 end:
   free (data);
 }
@@ -406,7 +411,7 @@ void handle_sendmsg (pid_t pid, ssize_t ret, int sockfd, const struct msghdr *ms
     return;
 
 
-  char *data = NULL;
+  unsigned char *data = NULL;
 
   // TODO: we must detect total length of original message (!)
   if (!(data = malloc (ret)))
@@ -422,7 +427,7 @@ void handle_sendmsg (pid_t pid, ssize_t ret, int sockfd, const struct msghdr *ms
   }
 
   handle_netlink_send (pid, sockfd, data, ret);
-
+  data = NULL;                  /* was already handled/freed */
 end:
   free (data);
 
