@@ -79,7 +79,7 @@ static int scan_proc_net_netlink (unsigned long inode, int *ret_protocol) {
 
     // TODO: fscanf?
     // 0000000000000000 0   4195573 00000000 0        0        0000000000000000 2        0        8636
-    if (sscanf (result, "%*s %d %*s %*s %*s %*s %*s %*s %*s %lu", &protocol, &scanned_inode) != 1)
+    if (sscanf (result, "%*s %d %*s %*s %*s %*s %*s %*s %*s %lu", &protocol, &scanned_inode) != 2)
     {
       fprintf (stderr, "Can not parse string %s\n", result);
       goto end;
@@ -88,7 +88,7 @@ static int scan_proc_net_netlink (unsigned long inode, int *ret_protocol) {
     if (inode != scanned_inode)
       continue;
 
-    fprintf (stderr, "Found that socket inode %lu is the netlink socket\n", inode);
+    fprintf (stderr, "Found that socket inode %lu is the netlink socket of protocol %d\n", inode, protocol);
 
     if (ret_protocol)
       *ret_protocol = protocol;
@@ -112,7 +112,7 @@ static void detect_fd_type (pid_t pid, int fd)
   char result[256];
   int tmp;
 
-  fprintf (stderr, "Detecting socket type!\n");
+  fprintf (stderr, "Detecting socket type of fd %d!\n", fd);
   tmp = snprintf (path, sizeof (path), "/proc/%u/fd/%d", (unsigned int) pid, fd);
 
   if (tmp <= 0)
