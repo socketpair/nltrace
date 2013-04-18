@@ -23,6 +23,19 @@
 static BITARRAY_TYPE netlink_sockets[65536 / WORDBITS];
 static BITARRAY_TYPE known_fds[65536 / WORDBITS];
 
+///////////////////////////////////////
+// THIS IS NEEDED TO PREVENT LIBRARIES TO BE OPTIMIZED_OUT
+// cache regitration is done in __init constructors of the libnl libraries.
+#include <netlink/route/route.h>
+#include <netlink/netfilter/nfnl.h>
+#include <netlink/genl/genl.h>
+void *references[] = {
+  rtnl_route_alloc_cache,
+  nfnl_connect,
+  genl_connect,
+};
+
+//////////////////////////////////////
 
 static int scan_proc_net_netlink (unsigned long inode, int *ret_protocol) {
   FILE *netlink;

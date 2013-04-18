@@ -2,6 +2,9 @@ all: main
 
 CFLAGS += -D_GNU_SOURCE -Wall -Wextra -I/usr/include/libnl3 -g
 LFLAGS += -lnl-3
+LFLAGS += -lnl-route-3
+LFLAGS += -lnl-genl-3
+LFLAGS += -lnl-nf-3
 
 .c.o:
 	$(CC) $(CFLAGS) -c $< -o $@
