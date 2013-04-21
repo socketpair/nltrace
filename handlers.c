@@ -14,236 +14,57 @@
 #include <sys/socket.h>
 #include <linux/netlink.h>
 #include <string.h>
-#include <errno.h>
 #include <stdlib.h>
 
-#include "utils.h"
-#include "nl_stub.h"
+#include "syscalls.h"
+#include "descriptor.h"
+#include "process.h"
+#include "handlers.h"
+#include "main.h"               /* ptrace_memcpy */
 
-static BITARRAY_TYPE netlink_sockets[65536 / WORDBITS];
-static BITARRAY_TYPE known_fds[65536 / WORDBITS];
+#define UNUSED __attribute__((unused))
 
-///////////////////////////////////////
-// THIS IS NEEDED TO PREVENT LIBRARIES TO BE OPTIMIZED_OUT
-// cache regitration is done in __init constructors of the libnl libraries.
-#include <netlink/route/route.h>
-#include <netlink/netfilter/nfnl.h>
-#include <netlink/genl/genl.h>
-void *references[] = {
-  rtnl_route_alloc_cache,
-  nfnl_connect,
-  genl_connect,
-};
-
-//////////////////////////////////////
-
-static int scan_proc_net_netlink (unsigned long inode, int *ret_protocol) {
-  FILE *netlink;
-  char result[256];
-  /* http://lxr.linux.no/linux+v3.8.8/net/netlink/af_netlink.c#L2055 */
-  static const char *header = "sk       Eth Pid    Groups   Rmem     Wmem     Dump     Locks     Drops     Inode\n";
-  int protocol;
-  unsigned long scanned_inode;
-  int retval = -1;
-
-
-  if (!(netlink = fopen ("/proc/net/netlink", "rte")))
-  {
-    perror ("Opening /proc/net/netlink");
-    goto end;
-  }
-
-  if (!fgets (result, sizeof (result), netlink))
-  {
-    fprintf (stderr, "Error reading header of /proc/net/netlink\n");
-    goto end;
-  }
-
-  if (strcmp (result, header))
-  {
-    fprintf (stderr, "header on your kernel does not match ours we expect!:\n"  /* */
-             " our:%s"          /* */
-             "your:%s",         /* */
-             header, result);
-    goto end;
-  }
-
-  while (fgets (result, sizeof (result), netlink))
-  {
-
-    if (strlen (result) == sizeof (result) - 1)
-    {
-      fprintf (stderr, "/proc/net/netlink line truncated\n");
-      goto end;
-    }
-
-    // TODO: fscanf?
-    // 0000000000000000 0   4195573 00000000 0        0        0000000000000000 2        0        8636
-    if (sscanf (result, "%*s %d %*s %*s %*s %*s %*s %*s %*s %lu", &protocol, &scanned_inode) != 2)
-    {
-      fprintf (stderr, "Can not parse string %s\n", result);
-      goto end;
-    }
-
-    if (inode != scanned_inode)
-      continue;
-
-    fprintf (stderr, "Found that socket inode %lu is the netlink socket of protocol %d\n", inode, protocol);
-
-    if (ret_protocol)
-      *ret_protocol = protocol;
-
-    retval = 1;
-    goto end;
-  }
-
-  fprintf (stderr, "Found that socket inode %lu is not netlink socket\n", inode);
-  retval = 0;
-
-end:
-  if (netlink)
-    fclose (netlink);
-  return retval;
-}
-
-static void detect_fd_type (pid_t pid, int fd)
-{
-  char path[128];
-  char result[256];
-  int tmp;
-
-  fprintf (stderr, "Detecting socket type of fd %d!\n", fd);
-  tmp = snprintf (path, sizeof (path), "/proc/%u/fd/%d", (unsigned int) pid, fd);
-
-  if (tmp <= 0)
-  {
-    perror ("sprintf of path");
-    return;
-  }
-
-  if (tmp >= (int) (sizeof (path)))
-  {
-    fprintf (stderr, "printf buffer overflow\n");
-    return;
-  }
-
-  if (readlink (path, result, sizeof (result)) == -1)
-  {
-    perror ("readlink");
-    return;
-  }
-
-  // TODO: %d? %ld?
-  unsigned long inode = -1;
-  if (sscanf (result, "socket:[%lu]", &inode) != 1)
-  {
-    // some other descriptor....
-    return;
-  }
-
-  int protocol;
-
-  if ((tmp = scan_proc_net_netlink (inode, &protocol)) == -1)
-  {
-    fprintf (stderr, "/proc/net/netlink scanning failed\n");
-    return;
-  }
-
-  bit_set (known_fds, fd);
-  if (tmp)
-  {
-    bit_set (netlink_sockets, fd);
-    handle_netlink_appear (pid, fd, protocol);
-    fprintf (stderr, "fd %d is a netlink socket\n", fd);
-  }
-  else
-  {
-    bit_clear (netlink_sockets, fd);
-  }
-}
-
-
-static int usermemcpy (void *destination, pid_t pid, const void *usermem, size_t length)
-{
-
-  size_t tmp = ((size_t) usermem) % sizeof (long);
-
-  if (tmp)
-  {
-    size_t useful_bytes = sizeof (long) - tmp;
-
-//    fprintf (stderr, "usermemcpy: copying unaligned start (%lu bytes) of user memory\n", (unsigned long) useful_bytes);
-    long chunk;
-    if ((chunk = ptrace (PTRACE_PEEKDATA, pid, (void *) (((size_t) usermem) / sizeof (long) * sizeof (long)), NULL)) == -1 && errno)
-    {
-      perror ("ptrace");
-      return -1;
-    }
-
-    memcpy (destination, ((char *) &chunk) + tmp, useful_bytes);
-    usermem += useful_bytes;
-    destination += useful_bytes;
-    length -= useful_bytes;
-  }
-
-//  if (length >= sizeof (long))
-//    fprintf (stderr, "usermemcpy: copying aligned %lu bytes of memory\n", (unsigned long) (length / sizeof (long) * sizeof (long)));
-
-  while (length >= sizeof (long))
-  {
-    long chunk;
-    if ((chunk = ptrace (PTRACE_PEEKDATA, pid, usermem, NULL)) == -1 && errno)
-    {
-      perror ("ptrace");
-      return -1;
-    }
-    *(long *) destination = chunk;
-    destination += sizeof (long);
-    usermem += sizeof (long);
-    length -= sizeof (long);
-  }
-
-  if (length)
-  {
-//    fprintf (stderr, "usermemcpy: copying last %lu bytes from aligned user memory\n", (unsigned long) length);
-
-    long chunk;
-
-    if ((chunk = ptrace (PTRACE_PEEKDATA, pid, usermem, NULL)) == -1 && errno)
-    {
-      perror ("trace");
-
-      return -1;
-    }
-    memcpy (destination, &chunk, length);
-  }
-
-  return 0;
-}
-
-//TODO: exactly the same, but on UNIX sockets...
-void handle_socket (pid_t pid, int ret, int domain, int type, int protocol)
+void handle_socket (struct process *process, int ret, int domain, int type UNUSED, int protocol)
 {
   if (ret < 0)
     return;
 
-  (void) type;
-  (void) protocol;
+  struct descriptor *descriptor;
 
-  fprintf (stderr, "Setting %d as known (some socket)\n", ret);
-  bit_set (known_fds, ret);
-
-  if (domain != AF_NETLINK)
+  if (!(descriptor = descriptor_alloc (ret, domain, protocol)))
   {
-    bit_clear (netlink_sockets, ret);
+    fprintf (stderr, "descriptor allocation failed\n");
     return;
   }
 
-  bit_set (netlink_sockets, ret);
-  handle_netlink_appear (pid, ret, protocol);
+  if (process_add_descriptor (process, descriptor) == -1)
+  {
+    fprintf (stderr, "Cannot add descriptor to process\n");
+    descriptor_destroy (descriptor);
+    return;
+  }
+
 }
 
-void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t buflen, const struct sockaddr *dest_addr, socklen_t addrlen)
+static struct descriptor *FDGET (struct process *process, int fd)
+{
+
+  struct descriptor *descriptor;
+
+  if (!(descriptor = process_get_descriptor (process, fd)))
+  {
+    fprintf (stderr, "Cannot get descriptor from process\n");
+    return NULL;
+  }
+
+  if (descriptor_get_family (descriptor) != AF_NETLINK)
+    return NULL;
+
+  return descriptor;
+
+}
+
+void handle_sendto (struct process *process, ssize_t ret, int sockfd, const char *buf, size_t buflen, const struct sockaddr *dest_addr, socklen_t addrlen)
 {
 
   (void) buf;
@@ -251,11 +72,9 @@ void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t 
   (void) dest_addr;
   (void) addrlen;
 
+  struct descriptor *descriptor;
 
-  if (!bit_get (known_fds, sockfd))
-    detect_fd_type (pid, sockfd);
-
-  if (!bit_get (netlink_sockets, sockfd))
+  if (!(descriptor = FDGET (process, sockfd)))
     return;
 
   if (ret < 0)
@@ -276,21 +95,24 @@ void handle_sendto (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t 
     goto end;
   }
 
-  if (usermemcpy (data, pid, buf, buflen) == -1)
+
+  if (ptrace_memcpy (process_get_pid (process), data, buf, buflen) == -1)
   {
-    fprintf (stderr, "usermemcpy() [sendto] failed\n");
+    fprintf (stderr, "ptrace_memcpy() [sendto] failed\n");
     goto end;
   }
 
-  handle_netlink_send (pid, sockfd, data, buflen);
-  data = NULL;                  /* was already handled/freed */
+  descriptor_handle_send (descriptor, data, buflen);
+  /* was already handled/freed */
+  data = NULL;
 
 end:
   free (data);
 }
 
 
-void handle_recvfrom (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_t buflen, int flags, const struct sockaddr *src_addr, const socklen_t *addrlen)
+void handle_recvfrom (struct process *process, ssize_t ret, int sockfd, const char *buf, size_t buflen, int flags, const struct sockaddr *src_addr,
+                      const socklen_t *addrlen)
 {
   if (ret < 0)
     return;
@@ -302,11 +124,11 @@ void handle_recvfrom (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_
   (void) src_addr;
   (void) addrlen;
 
-  if (!bit_get (known_fds, sockfd))
-    detect_fd_type (pid, sockfd);
+  struct descriptor *descriptor;
 
-  if (!bit_get (netlink_sockets, sockfd))
+  if (!(descriptor = FDGET (process, sockfd)))
     return;
+
 
   if (ret == 0)
   {
@@ -322,36 +144,37 @@ void handle_recvfrom (pid_t pid, ssize_t ret, int sockfd, const char *buf, size_
     goto end;
   }
 
-  if (usermemcpy (data, pid, buf, ret) == -1)
+  if (ptrace_memcpy (process_get_pid (process), data, buf, ret) == -1)
   {
-    fprintf (stderr, "usermemcpy() [recvfrom] failed\n");
+    fprintf (stderr, "ptrace_memcpy() [recvfrom] failed\n");
     goto end;
   }
 
-  handle_netlink_recv (pid, sockfd, data, ret);
-  data = NULL;                  /* was already handled/freed */
+  descriptor_handle_recv (descriptor, data, ret);
+  /* was already handled/freed */
+  data = NULL;
 
 end:
   free (data);
 }
 
 
-static int handle_msg (void *data, size_t datalen, pid_t pid, const struct msghdr *msg)
+static int handle_msg (void *data, size_t datalen, const struct process *process, const struct msghdr *msg)
 {
   const struct iovec *msg_iov;
   size_t msg_iovlen;
 
 //  fprintf (stderr, "RECVMSG: begin of operation\n");
 
-  if (usermemcpy (&msg_iov, pid, &msg->msg_iov, sizeof (msg_iov)) == -1)
+  if (ptrace_memcpy (process_get_pid (process), &msg_iov, &msg->msg_iov, sizeof (msg_iov)) == -1)
   {
-    fprintf (stderr, "usermemcpy() [recvmsg1] failed\n");
+    fprintf (stderr, "ptrace_memcpy() [recvmsg1] failed\n");
     return -1;
   }
 
-  if (usermemcpy (&msg_iovlen, pid, &msg->msg_iovlen, sizeof (msg_iovlen)) == -1)
+  if (ptrace_memcpy (process_get_pid (process), &msg_iovlen, &msg->msg_iovlen, sizeof (msg_iovlen)) == -1)
   {
-    fprintf (stderr, "usermemcpy() [recvmsg2] failed\n");
+    fprintf (stderr, "ptrace_memcpy() [recvmsg2] failed\n");
     return -1;
   }
 
@@ -364,15 +187,15 @@ static int handle_msg (void *data, size_t datalen, pid_t pid, const struct msghd
 
 //    fprintf (stderr, "RECVMSG: begin of copying iovec fields\n");
 
-    if (usermemcpy (&iov_base, pid, &msg_iov->iov_base, sizeof (iov_base)) == -1)
+    if (ptrace_memcpy (process_get_pid (process), &iov_base, &msg_iov->iov_base, sizeof (iov_base)) == -1)
     {
-      fprintf (stderr, "usermemcpy() [recvmsg3] failed\n");
+      fprintf (stderr, "ptrace_memcpy() [recvmsg3] failed\n");
       return -1;
     }
 
-    if (usermemcpy (&iov_len, pid, &msg_iov->iov_len, sizeof (iov_len)) == -1)
+    if (ptrace_memcpy (process_get_pid (process), &iov_len, &msg_iov->iov_len, sizeof (iov_len)) == -1)
     {
-      fprintf (stderr, "usermemcpy() [recvmsg4] failed\n");
+      fprintf (stderr, "ptrace_memcpy() [recvmsg4] failed\n");
       return -1;
     }
 
@@ -384,9 +207,9 @@ static int handle_msg (void *data, size_t datalen, pid_t pid, const struct msghd
       iov_len = datalen;
     }
 
-    if (usermemcpy (data, pid, iov_base, iov_len) == -1)
+    if (ptrace_memcpy (process_get_pid (process), data, iov_base, iov_len) == -1)
     {
-      fprintf (stderr, "usermemcpy() [recvmsg5] failed\n");
+      fprintf (stderr, "ptrace_memcpy() [recvmsg5] failed\n");
       return -1;
     }
 
@@ -408,7 +231,7 @@ static int handle_msg (void *data, size_t datalen, pid_t pid, const struct msghd
 }
 
 
-void handle_recvmsg (pid_t pid, ssize_t ret, int sockfd, struct msghdr *msg, int flags)
+void handle_recvmsg (struct process *process, ssize_t ret, int sockfd, struct msghdr *msg, int flags)
 {
   if (ret < 0)
     return;
@@ -416,10 +239,9 @@ void handle_recvmsg (pid_t pid, ssize_t ret, int sockfd, struct msghdr *msg, int
   (void) msg;
   (void) flags;
 
-  if (!bit_get (known_fds, sockfd))
-    detect_fd_type (pid, sockfd);
+  struct descriptor *descriptor;
 
-  if (!bit_get (netlink_sockets, sockfd))
+  if (!(descriptor = FDGET (process, sockfd)))
     return;
 
   unsigned char *data = NULL;
@@ -430,20 +252,21 @@ void handle_recvmsg (pid_t pid, ssize_t ret, int sockfd, struct msghdr *msg, int
     goto end;
   }
 
-  if (handle_msg (data, ret, pid, msg) == -1)
+  if (handle_msg (data, ret, process, msg) == -1)
   {
     fprintf (stderr, "handle_msg FAILED\n");
     goto end;
   }
 
-  handle_netlink_recv (pid, sockfd, data, ret);
-  data = NULL;                  /* was already handled/freed */
+  descriptor_handle_recv (descriptor, data, ret);
+  /* was already handled/freed */
+  data = NULL;
 
 end:
   free (data);
 }
 
-void handle_sendmsg (pid_t pid, ssize_t ret, int sockfd, const struct msghdr *msg, int flags)
+void handle_sendmsg (struct process *process, ssize_t ret, int sockfd, const struct msghdr *msg, int flags)
 {
   if (ret < 0)
     return;
@@ -451,12 +274,10 @@ void handle_sendmsg (pid_t pid, ssize_t ret, int sockfd, const struct msghdr *ms
   (void) msg;
   (void) flags;
 
-  if (!bit_get (known_fds, sockfd))
-    detect_fd_type (pid, sockfd);
+  struct descriptor *descriptor;
 
-  if (!bit_get (netlink_sockets, sockfd))
+  if (!(descriptor = FDGET (process, sockfd)))
     return;
-
 
   unsigned char *data = NULL;
 
@@ -467,86 +288,66 @@ void handle_sendmsg (pid_t pid, ssize_t ret, int sockfd, const struct msghdr *ms
     goto end;
   }
 
-  if (handle_msg (data, ret, pid, msg) == -1)
+  if (handle_msg (data, ret, process, msg) == -1)
   {
     fprintf (stderr, "handle_msg FAILED\n");
     goto end;
   }
 
-  handle_netlink_send (pid, sockfd, data, ret);
-  data = NULL;                  /* was already handled/freed */
+  descriptor_handle_send (descriptor, data, ret);
+/* was already handled/freed */
+  data = NULL;
 end:
   free (data);
 
 }
 
 
-void handle_close (pid_t pid, int ret, int fd)
+void handle_close (struct process *process, int ret, int fd)
 {
   if (ret < 0)
     return;
 
-  if (!bit_get (known_fds, fd))
-  {
-    fprintf (stderr, "Setting %d as known (closed)\n", fd);
-    bit_set (known_fds, fd);
-  }
-
-  if (!bit_get (netlink_sockets, fd))
-    return;
-
-  bit_clear (netlink_sockets, fd);
-  handle_netlink_close (pid, fd);
+  //will not fail if no such descriptor...
+  process_delete_descriptor_int (process, fd);
 }
 
-void handle_dup2 (pid_t pid, int ret, int oldfd, int newfd)
+void handle_dup2 (struct process *process, int ret, int oldfd, int newfd)
 {
   if (ret < 0)
     return;
 
-  if (ret != newfd)
+  struct descriptor *olddescriptor, *newdescriptor;
+
+  if (!(olddescriptor = process_get_descriptor (process, oldfd)))
   {
-    fprintf (stderr, "Internal error! dup2 returns not that descriptor (!)\n");
+    fprintf (stderr, "Cannot get descriptor from process\n");
+    return;
   }
 
-  if (!bit_get (known_fds, oldfd))
-    detect_fd_type (pid, oldfd);
+  //will not fail if no such descriptor...
+  process_delete_descriptor_int (process, newfd);
 
-  bool new_was_known = bit_get (known_fds, newfd);
-
-  if (new_was_known && bit_get (netlink_sockets, newfd))
+  if (!(newdescriptor = descriptor_alloc (newfd, descriptor_get_family (olddescriptor), descriptor_get_protocol (olddescriptor))))
   {
-    fprintf (stderr, "Warning, overriding netlink socket with fd %d with another one\n", newfd);
-    bit_clear (netlink_sockets, newfd);
-    handle_netlink_close (pid, newfd);
+    fprintf (stderr, "cannot allocate new descriptor in dup2\n");
+    return;
   }
 
-  if (!new_was_known)
+  if (!process_add_descriptor (process, newdescriptor))
   {
-    fprintf (stderr, "Setting %d as known (result of DUP)\n", newfd);
-    bit_set (known_fds, newfd);
+    fprintf (stderr, "cannot add duplicated descriptor to process\n");
+    return;
   }
-
-  if (bit_get (netlink_sockets, oldfd))
-  {
-    bit_set (netlink_sockets, newfd);
-#warning last zero is the protocol of original socket (!)
-    handle_netlink_appear (pid, newfd, 0);
-  }
-  // if was unknown, netlink bit already cleaned.
-  // if was known: if was netlink socket     - was cleaned earlier
-  //               if was not netlink socket - cleaning not required
-
-
 }
 
-void handle_dup (pid_t pid, int ret, int oldfd)
+void handle_dup (struct process *process, int ret, int oldfd)
 {
-  handle_dup2 (pid, ret, oldfd, ret);
+  handle_dup2 (process, ret, oldfd, ret);
 }
 
-void handle_dup3 (pid_t pid, int ret, int oldfd, int newfd, int flags)
+void handle_dup3 (struct process *process, int ret, int oldfd, int newfd, int flags)
 {
   (void) flags;
-  handle_dup2 (pid, ret, oldfd, newfd);
+  handle_dup2 (process, ret, oldfd, newfd);
 }

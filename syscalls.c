@@ -8,13 +8,15 @@
 
 #include <unistd.h>
 #include <sys/syscall.h>        /* For SYS_xxx definitions */
-
+#include <errno.h>
 
 #include <asm/types.h>
 #include <sys/socket.h>
 #include <linux/netlink.h>
+#include <string.h>
 
 #include "handlers.h"
+#include "syscalls.h"
 
 /* match order as in struct user_regs_struct */
 typedef struct
@@ -57,7 +59,7 @@ static void print_args_t (FILE *output, const args_t *args)
 
 
 
-static inline void get_args (const struct user_regs_struct *state, args_t *args)
+static void get_args (const struct user_regs_struct *state, args_t *args)
 {
 /* match order as in struct user_regs_struct */
 #ifdef __amd64__
@@ -83,7 +85,7 @@ static inline void get_args (const struct user_regs_struct *state, args_t *args)
 #endif
 }
 
-void trace_syscall (pid_t pid, const struct user_regs_struct *state1, const struct user_regs_struct *state2)
+void trace_syscall (struct process *process, const struct user_regs_struct *state1, const struct user_regs_struct *state2)
 {
   args_t args1;
   args_t args2;
@@ -101,19 +103,20 @@ void trace_syscall (pid_t pid, const struct user_regs_struct *state1, const stru
     break;
 #else
   case SYS_socket:
-    handle_socket (pid, args2.ret, args1.a1, args1.a2, args1.a3);
+    handle_socket (process, args2.ret, args1.a1, args1.a2, args1.a3);
     break;
   case SYS_sendto:
-    handle_sendto (pid, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, (const struct sockaddr *) args1.a4, args1.a5);
+    handle_sendto (process, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, (const struct sockaddr *) args1.a4, args1.a5);
     break;
   case SYS_recvfrom:
-    handle_recvfrom (pid, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, args1.a4, (const struct sockaddr *) args1.a5, (const socklen_t *) args1.a6);
+    handle_recvfrom (process, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, args1.a4, (const struct sockaddr *) args1.a5,
+                     (const socklen_t *) args1.a6);
     break;
   case SYS_recvmsg:
-    handle_recvmsg (pid, args2.ret, args1.a1, (struct msghdr *) args1.a2, args1.a3);
+    handle_recvmsg (process, args2.ret, args1.a1, (struct msghdr *) args1.a2, args1.a3);
     break;
   case SYS_sendmsg:
-    handle_sendmsg (pid, args2.ret, args1.a1, (const struct msghdr *) args1.a2, args1.a3);
+    handle_sendmsg (process, args2.ret, args1.a1, (const struct msghdr *) args1.a2, args1.a3);
     break;
   case SYS_recvmmsg:
     break;
@@ -121,16 +124,16 @@ void trace_syscall (pid_t pid, const struct user_regs_struct *state1, const stru
     break;
 #endif
   case SYS_close:
-    handle_close (pid, args2.ret, args1.a1);
+    handle_close (process, args2.ret, args1.a1);
     break;
   case SYS_dup3:
-    handle_dup3 (pid, args2.ret, args1.a1, args1.a2, args1.a3);
+    handle_dup3 (process, args2.ret, args1.a1, args1.a2, args1.a3);
     break;
   case SYS_dup2:
-    handle_dup2 (pid, args2.ret, args1.a1, args1.a2);
+    handle_dup2 (process, args2.ret, args1.a1, args1.a2);
     break;
   case SYS_dup:
-    handle_dup (pid, args2.ret, args1.a1);
+    handle_dup (process, args2.ret, args1.a1);
     break;
     /*
        case SYS_execve:

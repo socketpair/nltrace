@@ -6,27 +6,19 @@
 
 #include "nl_stub.h"
 
-static int protocols[65536];
+//////////////////////////////////////
+// THIS IS NEEDED TO PREVENT LIBRARIES TO BE OPTIMIZED_OUT
+// cache regitration is done in __init constructors of the libnl libraries.
+#include <netlink/route/route.h>
+#include <netlink/netfilter/nfnl.h>
+#include <netlink/genl/genl.h>
+void *references[] = {
+  rtnl_route_alloc_cache,
+  nfnl_connect,
+  genl_connect,
+};
 
-void handle_netlink_appear (pid_t pid, int sockfd, int protocol)
-{
-  (void) pid;
-
-  fprintf (stderr, "Netlink socket fd %d created (protocol %d)\n", sockfd, protocol);
-
-  protocols[sockfd] = protocol;
-
-  return;
-}
-
-void handle_netlink_close (pid_t pid, int sockfd)
-{
-  (void) pid;
-  fprintf (stderr, "Netlink socket fd %d closed\n", sockfd);
-  return;
-}
-
-static int message_protocol_setter (struct nl_msg *msg, void *arg)
+static int message_dumper (struct nl_msg *msg, void *arg)
 {
   int protocol;
   protocol = *(int *) arg;
@@ -39,14 +31,13 @@ static int message_protocol_setter (struct nl_msg *msg, void *arg)
 }
 
 
-static void handle_netlink_data (int sockfd, unsigned char *data, size_t length)
+
+
+void handle_netlink_data (int protocol, unsigned char *data, size_t length)
 {
 
-  struct nl_sock *sk;
-  struct nl_cb *cb;
-
-  bool used = false;
-#warning free memory if netlink faild to do that...
+  struct nl_sock *sk = NULL;
+  struct nl_cb *cb = NULL;
 
   /* Yes, closure (!)
    * We cannot "subclass" original socket to add new fields :(
@@ -62,25 +53,27 @@ static void handle_netlink_data (int sockfd, unsigned char *data, size_t length)
     /* prevent nl_recvmsgs to read this buffer again and again.
      * Just simulate that last recv() return 0 :)
      * */
-    if (used)
+    if (!data)
       return 0;
 
     *buf1 = data;
-    used = true;
+    data = NULL;
     return length;
   }
 
   // initialize all hooks to DEBUG variant...
+  // cb->refcount will be 1 after that
   if (!(cb = nl_cb_alloc (NL_CB_CUSTOM)))
   {
     fprintf (stderr, "nl_cb_alloc failed\n");
-    return;
+    goto end;
   }
-  if (!(sk = nl_socket_alloc_cb (cb)))
+
+  /* nl_socket_alloc_cb(cb) */
+  if (!(sk = nl_socket_alloc ()))
   {
     fprintf (stderr, "nl_socket_alloc failed\n");
-    nl_cb_put (cb);
-    return;
+    goto end;
   }
 
   nl_socket_disable_seq_check (sk);
@@ -95,41 +88,36 @@ static void handle_netlink_data (int sockfd, unsigned char *data, size_t length)
   // last argument is a pointer to "int protocol"
 
   //fprintf(stderr, "Calling nl_cb_set for fd %d\n", sockfd);
-  if (nl_cb_set (cb, NL_CB_MSG_IN, NL_CB_CUSTOM, message_protocol_setter, &protocols[sockfd]) < 0)
+  if (nl_cb_set (cb, NL_CB_MSG_IN, NL_CB_CUSTOM, message_dumper, &protocol) < 0)
   {
     fprintf (stderr, "nl_cb_set failed\n");
-    nl_socket_free (sk);
-    return;
+    goto end;
   }
 
-
-  //nl_object_dump() ??
-  //  nlmsg_set_proto(msg, sk->s_proto);
-
+/*
   if (nl_recvmsgs_default (sk) > 0)
   {
     fprintf (stderr, "nl_recvmsgs failed\n");
-    nl_socket_free (sk);
-    return;
+    goto end;
+  }
+*/
+  /* TODO: log retval of nl_recvmsgs_report */
+  if (nl_recvmsgs (sk, cb) < 0)
+  {
+    fprintf (stderr, "nl_recvmsgs_report() returns error\n");
   }
 
-  nl_socket_free (sk);
-}
 
-void handle_netlink_send (pid_t pid, int sockfd, unsigned char *data, size_t length)
-{
-  (void) pid;
-  (void) sockfd;
+end:
+  if (data)
+  {
+    fprintf (stderr, "WARNING: data was not handled\n");
+    free (data);
+  }
 
-  fprintf (stderr, "netlink send(%d):\n", sockfd);
-  handle_netlink_data (sockfd, data, length);
-}
+  if (sk)
+    nl_socket_free (sk);
 
-void handle_netlink_recv (pid_t pid, int sockfd, unsigned char *data, size_t length)
-{
-  (void) pid;
-
-
-  fprintf (stderr, "netlink recv(%d):\n", sockfd);
-  handle_netlink_data (sockfd, data, length);
+  if (cb)
+    nl_cb_put (cb);
 }

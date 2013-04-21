@@ -7,3 +7,5 @@
 -Targs_t
 -Tsocklen_t
 -TFILE
+-Tsize_t
+-Tssize_t

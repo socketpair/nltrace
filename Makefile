@@ -9,7 +9,13 @@ LFLAGS += -lnl-nf-3
 .c.o:
 	$(CC) $(CFLAGS) -c $< -o $@
 
-SRC = main.o handlers.o syscalls.o nl_stub.o
+SRC = descriptor.o
+SRC += handlers.o
+SRC += main.o
+SRC += process.o
+SRC += syscalls.o
+SRC += tracer.o
+SRC += nl_stub.o
 
 main: $(SRC)
 	$(CC) $(SRC) $(LFLAGS) -o $@
@@ -19,4 +25,3 @@ indent:
 
 clean:
 	rm -f *.[oais] main *~
-
