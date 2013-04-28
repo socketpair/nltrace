@@ -1,4 +1,4 @@
-all: main
+all: nltrace
 
 CFLAGS += -D_GNU_SOURCE -Wall -Wextra -I/usr/include/libnl3 -g
 LFLAGS += -lnl-3
@@ -17,11 +17,11 @@ SRC += syscalls.o
 SRC += tracer.o
 SRC += nl_stub.o
 
-main: $(SRC)
+nltrace: $(SRC)
 	$(CC) $(SRC) $(LFLAGS) -o $@
 
 indent:
 	indent *.c *.h
 
 clean:
-	rm -f *.[oais] main *~
+	rm -f *.[oais] nltrace *~
