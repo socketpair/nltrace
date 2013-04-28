@@ -5,7 +5,8 @@ struct descriptor;
 int compare_descriptors (const void *a, const void *b);
 
 struct descriptor *descriptor_alloc (int fd, int family, int protocol);
-struct descriptor *descriptor_alloc_detect (int fd, const char *description);
+struct descriptor *descriptor_alloc_detect_proc (int fd, const char *description);
+struct descriptor *descriptor_alloc_detect_live (int fd);
 
 void descriptor_destroy (struct descriptor *descriptor);
 int descriptor_get_family (const struct descriptor *descriptor);

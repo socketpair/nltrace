@@ -4,6 +4,7 @@
 #include <stdio.h>              /* perror */
 #include <string.h>             /* strcmp */
 #include <sys/socket.h>         /* AF_NETLINK */
+#include <errno.h>
 
 #include "descriptor.h"
 #include "nl_stub.h"
@@ -130,7 +131,7 @@ end:
 
 
 
-struct descriptor *descriptor_alloc_detect (int fd, const char *description)
+struct descriptor *descriptor_alloc_detect_proc (int fd, const char *description)
 {
   unsigned long inode;
   int tmp;
@@ -151,6 +152,45 @@ struct descriptor *descriptor_alloc_detect (int fd, const char *description)
 
   return descriptor_alloc (fd, AF_NETLINK, protocol);
 }
+
+struct descriptor *descriptor_alloc_detect_live (int fd)
+{
+  struct sockaddr addr;
+  socklen_t addrlen = sizeof (addr);
+
+
+  if (getsockname (fd, &addr, &addrlen) == -1)
+  {
+    int error = errno;
+    switch (error)
+    {
+    case EBADF:
+      fprintf (stderr, "getsockname(%d) returns EBADF\n", fd);
+      return NULL;
+    case ENOTSOCK:
+      return descriptor_alloc (fd, AF_UNSPEC, -1);
+    }
+
+    fprintf (stderr, "getsockname returns %d\n", error);
+    return NULL;
+  }
+
+  if (addr.sa_family != AF_NETLINK)
+    return descriptor_alloc (fd, AF_UNSPEC, -1);
+
+  int proto;
+  addrlen = sizeof (proto);
+
+  if (getsockopt (fd, SOL_SOCKET, SO_PROTOCOL, &proto, &addrlen) == -1)
+  {
+    fprintf (stderr, "getsockopt for socket does not work...\n");
+    return NULL;
+  }
+
+  return descriptor_alloc (fd, AF_NETLINK, proto);
+}
+
+
 
 int descriptor_get_family (const struct descriptor *descriptor)
 {
