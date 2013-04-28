@@ -125,9 +125,9 @@ struct descriptor *process_get_descriptor (struct process *process, int fd)
   }
 
 
-  if (!(tmp1 = tsearch (descriptor, &process->descriptors, compare_descriptors)))
+  if (process_add_descriptor (process, descriptor) == -1)
   {
-    fprintf (stderr, "Failed to find add descriptor to process\n");
+    fprintf (stderr, "Failed to add descriptor to process\n");
     descriptor_destroy (descriptor);
     return NULL;
   }
@@ -138,15 +138,23 @@ struct descriptor *process_get_descriptor (struct process *process, int fd)
 void process_delete_descriptor_int (struct process *process, int fd)
 {
   void *tmp;
+  struct descriptor *descriptor;
 
-  if (!(tmp = tdelete (&fd, &process->descriptors, compare_descriptors)))
+  //fprintf (stderr, "BUG: descriptor not found (or cannot be deleted)\n");
+  // should not bark, as it called in places where descriptor really may not exists...
+
+  if (!(tmp = tfind (&fd, &process->descriptors, compare_descriptors)))
+    return;
+
+  descriptor = *(struct descriptor **) tmp;
+
+  if (!tdelete (descriptor, &process->descriptors, compare_descriptors))
   {
-    //fprintf (stderr, "BUG: descriptor not found (or cannot be deleted)\n");
-    // should not bark, as it called in places where descriptor really may not exists...
+    fprintf (stderr, "Achtung! descriptor was found but cannot be deleted!\n");
     return;
   }
 
-  descriptor_destroy (*(struct descriptor **) tmp);
+  descriptor_destroy (descriptor);
 }
 
 
