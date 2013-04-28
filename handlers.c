@@ -20,7 +20,6 @@
 #include "descriptor.h"
 #include "process.h"
 #include "handlers.h"
-#include "main.h"               /* ptrace_memcpy */
 
 #define UNUSED __attribute__((unused))
 
@@ -89,25 +88,13 @@ void handle_sendto (struct process *process, ssize_t ret, int sockfd, const char
 
   unsigned char *data = NULL;
 
-  if (!(data = malloc (buflen)))
+  if (!(data = process_dup_memory (process, buf, buflen)))
   {
     perror ("malloc");
-    goto end;
-  }
-
-
-  if (ptrace_memcpy (process_get_pid (process), data, buf, buflen) == -1)
-  {
-    fprintf (stderr, "ptrace_memcpy() [sendto] failed\n");
-    goto end;
+    return;
   }
 
   descriptor_handle_send (descriptor, data, buflen);
-  /* was already handled/freed */
-  data = NULL;
-
-end:
-  free (data);
 }
 
 
@@ -138,24 +125,13 @@ void handle_recvfrom (struct process *process, ssize_t ret, int sockfd, const ch
 
   unsigned char *data = NULL;
 
-  if (!(data = malloc (ret)))
+  if (!(data = process_dup_memory (process, buf, ret)))
   {
     perror ("malloc");
-    goto end;
-  }
-
-  if (ptrace_memcpy (process_get_pid (process), data, buf, ret) == -1)
-  {
-    fprintf (stderr, "ptrace_memcpy() [recvfrom] failed\n");
-    goto end;
+    return;
   }
 
   descriptor_handle_recv (descriptor, data, ret);
-  /* was already handled/freed */
-  data = NULL;
-
-end:
-  free (data);
 }
 
 
@@ -164,17 +140,16 @@ static int handle_msg (void *data, size_t datalen, const struct process *process
   const struct iovec *msg_iov;
   size_t msg_iovlen;
 
-//  fprintf (stderr, "RECVMSG: begin of operation\n");
 
-  if (ptrace_memcpy (process_get_pid (process), &msg_iov, &msg->msg_iov, sizeof (msg_iov)) == -1)
+  if (process_memcpy (process, &msg_iov, &msg->msg_iov, sizeof (msg_iov)) == -1)
   {
-    fprintf (stderr, "ptrace_memcpy() [recvmsg1] failed\n");
+    fprintf (stderr, "process_memcpy() [recvmsg1] failed\n");
     return -1;
   }
 
-  if (ptrace_memcpy (process_get_pid (process), &msg_iovlen, &msg->msg_iovlen, sizeof (msg_iovlen)) == -1)
+  if (process_memcpy (process, &msg_iovlen, &msg->msg_iovlen, sizeof (msg_iovlen)) == -1)
   {
-    fprintf (stderr, "ptrace_memcpy() [recvmsg2] failed\n");
+    fprintf (stderr, "process_memcpy() [recvmsg2] failed\n");
     return -1;
   }
 
@@ -187,15 +162,15 @@ static int handle_msg (void *data, size_t datalen, const struct process *process
 
 //    fprintf (stderr, "RECVMSG: begin of copying iovec fields\n");
 
-    if (ptrace_memcpy (process_get_pid (process), &iov_base, &msg_iov->iov_base, sizeof (iov_base)) == -1)
+    if (process_memcpy (process, &iov_base, &msg_iov->iov_base, sizeof (iov_base)) == -1)
     {
-      fprintf (stderr, "ptrace_memcpy() [recvmsg3] failed\n");
+      fprintf (stderr, "process_memcpy() [recvmsg3] failed\n");
       return -1;
     }
 
-    if (ptrace_memcpy (process_get_pid (process), &iov_len, &msg_iov->iov_len, sizeof (iov_len)) == -1)
+    if (process_memcpy (process, &iov_len, &msg_iov->iov_len, sizeof (iov_len)) == -1)
     {
-      fprintf (stderr, "ptrace_memcpy() [recvmsg4] failed\n");
+      fprintf (stderr, "process_memcpy() [recvmsg4] failed\n");
       return -1;
     }
 
@@ -207,9 +182,9 @@ static int handle_msg (void *data, size_t datalen, const struct process *process
       iov_len = datalen;
     }
 
-    if (ptrace_memcpy (process_get_pid (process), data, iov_base, iov_len) == -1)
+    if (process_memcpy (process, data, iov_base, iov_len) == -1)
     {
-      fprintf (stderr, "ptrace_memcpy() [recvmsg5] failed\n");
+      fprintf (stderr, "process_memcpy() [recvmsg5] failed\n");
       return -1;
     }
 

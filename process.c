@@ -6,6 +6,7 @@
 
 #include "descriptor.h"
 #include "process.h"
+#include "main.h"               /* ptrace_memcpy */
 
 struct process
 {
@@ -133,7 +134,32 @@ void process_delete_descriptor_int (struct process *process, int fd)
   descriptor_destroy (*(struct descriptor **) tmp);
 }
 
-pid_t process_get_pid (const struct process *process)
+
+int process_memcpy (const struct process *process, void *dst, const void *src, size_t length)
 {
-  return process->pid;
+  if (process->pid)
+    return ptrace_memcpy (process->pid, dst, src, length);
+
+  memcpy (dst, src, length);
+  return 0;
+}
+
+unsigned char *process_dup_memory (const struct process *process, const char *buf, size_t buflen)
+{
+  unsigned char *data;
+
+  if (!(data = malloc (buflen)))
+  {
+    perror ("malloc");
+    return NULL;
+  }
+
+  if (process_memcpy (process, data, buf, buflen) == -1)
+  {
+    fprintf (stderr, "process_memcpy() failed\n");
+    free (data);
+    return NULL;
+  }
+
+  return data;
 }
