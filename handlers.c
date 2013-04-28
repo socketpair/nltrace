@@ -45,7 +45,7 @@ void handle_socket (struct process *process, int ret, int domain, int type UNUSE
 
 }
 
-static struct descriptor *FDGET (struct process *process, int fd)
+static struct descriptor *get_netlink_descriptor (struct process *process, int fd)
 {
 
   struct descriptor *descriptor;
@@ -73,7 +73,7 @@ void handle_sendto (struct process *process, ssize_t ret, int sockfd, const char
 
   struct descriptor *descriptor;
 
-  if (!(descriptor = FDGET (process, sockfd)))
+  if (!(descriptor = get_netlink_descriptor (process, sockfd)))
     return;
 
   if (ret < 0)
@@ -113,7 +113,7 @@ void handle_recvfrom (struct process *process, ssize_t ret, int sockfd, const ch
 
   struct descriptor *descriptor;
 
-  if (!(descriptor = FDGET (process, sockfd)))
+  if (!(descriptor = get_netlink_descriptor (process, sockfd)))
     return;
 
 
@@ -216,7 +216,7 @@ void handle_recvmsg (struct process *process, ssize_t ret, int sockfd, struct ms
 
   struct descriptor *descriptor;
 
-  if (!(descriptor = FDGET (process, sockfd)))
+  if (!(descriptor = get_netlink_descriptor (process, sockfd)))
     return;
 
   unsigned char *data = NULL;
@@ -251,7 +251,7 @@ void handle_sendmsg (struct process *process, ssize_t ret, int sockfd, const str
 
   struct descriptor *descriptor;
 
-  if (!(descriptor = FDGET (process, sockfd)))
+  if (!(descriptor = get_netlink_descriptor (process, sockfd)))
     return;
 
   unsigned char *data = NULL;
