@@ -92,7 +92,7 @@ void trace_syscall (struct process *process, const struct user_regs_struct *stat
     handle_socket (process, args2.ret, args1.a1, args1.a2, args1.a3);
     break;
   case SYS_sendto:
-    handle_sendto (process, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, (const struct sockaddr *) args1.a4, args1.a5);
+    handle_sendto (process, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, args1.a4, (const struct sockaddr *) args1.a5, args1.a6);
     break;
   case SYS_recvfrom:
     handle_recvfrom (process, args2.ret, args1.a1, (const char *) args1.a2, args1.a3, args1.a4, (const struct sockaddr *) args1.a5,

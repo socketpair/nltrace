@@ -63,13 +63,15 @@ static struct descriptor *get_netlink_descriptor (struct process *process, int f
 
 }
 
-void handle_sendto (struct process *process, ssize_t ret, int sockfd, const char *buf, size_t buflen, const struct sockaddr *dest_addr, socklen_t addrlen)
+void handle_sendto (struct process *process, ssize_t ret, int sockfd, const char *buf, size_t buflen, int flags, const struct sockaddr *dest_addr,
+                    socklen_t addrlen)
 {
 
   (void) buf;
   (void) buflen;
   (void) dest_addr;
   (void) addrlen;
+  (void) flags;
 
   struct descriptor *descriptor;
 

@@ -8,7 +8,8 @@ struct msghdr;
 struct process;
 
 void handle_socket (struct process *process, int ret, int domain, int type, int protocol);
-void handle_sendto (struct process *process, ssize_t ret, int sockfd, const char *buf, size_t buflen, const struct sockaddr *dest_addr, socklen_t addrlen);
+void handle_sendto (struct process *process, ssize_t ret, int sockfd, const char *buf, size_t buflen, int flags, const struct sockaddr *dest_addr,
+                    socklen_t addrlen);
 void handle_recvfrom (struct process *process, ssize_t ret, int sockfd, const char *buf, size_t buflen, int flags, const struct sockaddr *src_addr,
                       const socklen_t *addrlen);
 void handle_close (struct process *process, int ret, int fd);
