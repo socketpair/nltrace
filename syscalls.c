@@ -21,16 +21,6 @@
 /* match order as in struct user_regs_struct */
 typedef struct
 {
-#ifdef __amd64__
-  unsigned long a6;
-  unsigned long a5;
-  unsigned long ret;
-  unsigned long a4;
-  unsigned long a3;
-  unsigned long a2;
-  unsigned long a1;
-  unsigned long nr;
-#else
   unsigned long a1;
   unsigned long a2;
   unsigned long a3;
@@ -39,8 +29,6 @@ typedef struct
   unsigned long a6;
   unsigned long ret;
   unsigned long nr;
-#endif
-
 } args_t;
 
 static void print_args_t (FILE *output, const args_t *args)
@@ -63,13 +51,13 @@ static void get_args (const struct user_regs_struct *state, args_t *args)
 {
 /* match order as in struct user_regs_struct */
 #ifdef __amd64__
-  args->a6 = state->r9;
-  args->a5 = state->r8;
-  args->ret = state->rax;
-  args->a4 = state->rcx;
-  args->a3 = state->rdx;
-  args->a2 = state->rsi;
   args->a1 = state->rdi;
+  args->a2 = state->rsi;
+  args->a3 = state->rdx;
+  args->a4 = state->rcx;
+  args->a5 = state->r8;
+  args->a6 = state->r9;
+  args->ret = state->rax;
   args->nr = state->orig_rax;
 #else
   args->a1 = state->ebx;
@@ -79,9 +67,7 @@ static void get_args (const struct user_regs_struct *state, args_t *args)
   args->a5 = state->edi;
   args->a6 = state->ebp;
   args->ret = state->eax;
-
   args->nr = state->orig_eax;
-
 #endif
 }
 
