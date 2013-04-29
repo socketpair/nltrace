@@ -75,55 +75,32 @@ int compare_processes (const void *a, const void *b)
 struct descriptor *process_get_descriptor (struct process *process, int fd)
 {
   struct descriptor *descriptor;
-  char path[128];
-  char result[256];
-  int tmp;
   void *tmp1;
+  pid_t pid;
 
   if ((tmp1 = tfind (&fd, &process->descriptors, compare_descriptors)))
     return *(struct descriptor **) tmp1;
 
   fprintf (stderr, "Detecting descriptor type of fd %d!\n", fd);
 
+  pid = process->pid;
 
-
-  if (process->pid)
+  if (!pid)
   {
-    tmp = snprintf (path, sizeof (path), "/proc/%u/fd/%d", process->pid, fd);
+    if ((descriptor = descriptor_alloc_detect_live (fd)))
+      goto descriptor_ready;
 
-    if (tmp <= 0)
-    {
-      perror ("sprintf of path");
-      return NULL;
-    }
-
-    if (tmp >= (int) (sizeof (path)))
-    {
-      fprintf (stderr, "printf buffer overflow\n");
-      return NULL;
-    }
-
-    if (readlink (path, result, sizeof (result)) == -1)
-    {
-      perror ("readlink");
-      return NULL;
-    }
-
-    if (!(descriptor = descriptor_alloc_detect_proc (fd, result)))
-    {
-      fprintf (stderr, "descriptor_alloc_detect failed\n");
-      return NULL;
-    }
-  }
-  else
-  {
-    if (!(descriptor = descriptor_alloc_detect_live (fd)))
-    {
-      fprintf (stderr, "descriptor_alloc_detect failed\n");
-      return NULL;
-    }
+    fprintf (stderr, "descriptor_alloc_detect_live failed. Falling back to /proc detector\n");
+    pid = getpid ();
   }
 
+  if (!(descriptor = descriptor_alloc_detect_proc (fd, pid)))
+  {
+    fprintf (stderr, "descriptor_alloc_detect_proc failed\n");
+    return NULL;
+  }
+
+descriptor_ready:
 
   if (process_add_descriptor (process, descriptor) == -1)
   {

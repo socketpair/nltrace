@@ -4,6 +4,7 @@
 #include <stdio.h>              /* perror */
 #include <string.h>             /* strcmp */
 #include <sys/socket.h>         /* AF_NETLINK */
+#include <unistd.h>             /* readlink */
 #include <errno.h>
 
 #include "descriptor.h"
@@ -131,10 +132,35 @@ end:
 
 
 
-struct descriptor *descriptor_alloc_detect_proc (int fd, const char *description)
+struct descriptor *descriptor_alloc_detect_proc (int fd, pid_t pid)
 {
   unsigned long inode;
   int tmp;
+
+  char path[128];
+  char description[256];
+
+
+  tmp = snprintf (path, sizeof (path), "/proc/%u/fd/%d", (unsigned int) pid, fd);
+
+  if (tmp <= 0)
+  {
+    perror ("sprintf of path");
+    return NULL;
+  }
+
+  if (tmp >= (int) (sizeof (path)))
+  {
+    fprintf (stderr, "printf buffer overflow\n");
+    return NULL;
+  }
+
+  if (readlink (path, description, sizeof (description)) == -1)
+  {
+    perror ("readlink");
+    // TODO: if very long link value => non-netlnik
+    return NULL;
+  }
 
   /* this is not socket at all */
   if (sscanf (description, "socket:[%lu]", &inode) != 1)
