@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <linux/netlink.h>
 #include <errno.h>
+#include <elf.h> /* NT_PRSTATUS */
 
 #include "syscalls.h"
 #include "tracer.h"
@@ -63,9 +64,18 @@ static int wait_for_break (pid_t pid, struct user_regs_struct *state, int *statu
   if ((ret = wait_for_stopped (pid, true, status)))
     return ret;
 
-  if (ptrace (PTRACE_GETREGS, pid, 0, state) == -1)
+#ifdef __aarch64__
+  struct iovec io;
+  io.iov_base = state;
+  io.iov_len = sizeof(*state);
+
+  if (ptrace (PTRACE_GETREGSET, pid, NT_PRSTATUS, &io) == -1)
     return -1;
 
+#else
+  if (ptrace (PTRACE_GETREGS, pid, 0, state) == -1)
+    return -1;
+#endif
   return 0;
 }
 
