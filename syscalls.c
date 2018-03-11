@@ -45,11 +45,12 @@ static void print_args_t (FILE *output, const args_t *args)
 
 }
 
-
-
 static void get_args (const struct user_regs_struct *state, args_t *args)
 {
 /* match order as in struct user_regs_struct */
+#ifdef __aarch64__
+  (void)state; (void) args;
+#else
 #ifdef __amd64__
   args->a1 = state->rdi;
   args->a2 = state->rsi;
@@ -69,6 +70,7 @@ static void get_args (const struct user_regs_struct *state, args_t *args)
   args->ret = state->eax;
   args->nr = state->orig_eax;
 #endif
+#endif
 }
 
 void trace_syscall (struct process *process, const struct user_regs_struct *state1, const struct user_regs_struct *state2)
@@ -76,8 +78,21 @@ void trace_syscall (struct process *process, const struct user_regs_struct *stat
   args_t args1;
   args_t args2;
 
+#ifdef __aarch64__
+  args1.a1 = state1->regs[0];
+  args1.a2 = state1->regs[1];
+  args1.a3 = state1->regs[2];
+  args1.a4 = state1->regs[3];
+  args1.a5 = state1->regs[4];
+  args1.a6 = state1->regs[5];
+
+  args1.nr = state1->regs[8];
+
+  args2.ret = state2->regs[0];
+#else
   get_args (state1, &args1);
   get_args (state2, &args2);
+#endif
 
   // http://www.skyfree.org/linux/kernel_network/socket.html
   switch (args1.nr)
@@ -115,9 +130,11 @@ void trace_syscall (struct process *process, const struct user_regs_struct *stat
   case SYS_dup3:
     handle_dup3 (process, args2.ret, args1.a1, args1.a2, args1.a3);
     break;
+#ifndef __aarch64__
   case SYS_dup2:
     handle_dup2 (process, args2.ret, args1.a1, args1.a2);
     break;
+#endif
   case SYS_dup:
     handle_dup (process, args2.ret, args1.a1);
     break;
