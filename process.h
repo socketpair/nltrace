@@ -1,5 +1,6 @@
 #ifndef NLTRACE_PROCESS_H
 #define NLTRACE_PROCESS_H
+#include <sys/types.h>
 
 struct process;
 struct descriptor;
